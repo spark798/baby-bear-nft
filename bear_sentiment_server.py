@@ -19,12 +19,25 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.request import urlopen, Request
 from urllib.error   import URLError
 
-# SSL context — use certifi bundle if available, else system default
-try:
-    import certifi
-    _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-except ImportError:
-    _ssl_ctx = ssl.create_default_context()
+# SSL — try system certs first (works on Render), fallback to certifi
+def _make_ssl_ctx():
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = True
+        return ctx
+    except Exception:
+        pass
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+_ssl_ctx = _make_ssl_ctx()
 
 # ══════════════════════════════════════════════════════════════════
 #  Config
@@ -388,33 +401,49 @@ _sent_cache = {'pct': 0.0, 'price_now': 0, 'price_8h': 0, 'key': 'up_low',
 _sent_lock  = threading.Lock()
 
 def fetch_sentiment():
-    """Fetch 8h BTC change via CoinGecko (primary) or Binance (fallback)."""
-    # ── CoinGecko hourly chart → find price closest to 8h ago ─────
+    """Fetch 8h BTC change. Tries 3 sources in order."""
+    hdrs = {'User-Agent': 'Mozilla/5.0'}
+
+    # ── 1. CryptoCompare hourly OHLCV (no key, reliable) ─────────
+    try:
+        url = 'https://min-api.cryptocompare.com/data/v2/histohour?fsym=BTC&tsym=USD&limit=9'
+        with urlopen(Request(url, headers=hdrs), timeout=10, context=_ssl_ctx) as r:
+            data = json.loads(r.read())
+        candles   = data['Data']['Data']
+        price_8h  = float(candles[0]['open'])
+        price_now = float(candles[-1]['close'])
+        pct = (price_now - price_8h) / price_8h * 100
+        return pct, price_now, price_8h, 'CryptoCompare'
+    except Exception as e:
+        print(f'  CryptoCompare fail: {e}')
+
+    # ── 2. CoinGecko hourly chart ─────────────────────────────────
     try:
         url = 'https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1'
-        req = Request(url, headers={'User-Agent':'Mozilla/5.0'})
-        with urlopen(req, timeout=12, context=_ssl_ctx) as r:
+        with urlopen(Request(url, headers=hdrs), timeout=12, context=_ssl_ctx) as r:
             data = json.loads(r.read())
-        prices = data['prices']   # [[ts_ms, price], ...]
+        prices    = data['prices']
         now_ts    = time.time() * 1000
-        target    = now_ts - 8 * 3600 * 1000
         price_now = prices[-1][1]
-        price_8h  = min(prices, key=lambda p: abs(p[0] - target))[1]
+        price_8h  = min(prices, key=lambda p: abs(p[0] - (now_ts - 8*3600*1000)))[1]
         pct = (price_now - price_8h) / price_8h * 100
         return pct, price_now, price_8h, 'CoinGecko'
-    except Exception: pass
+    except Exception as e:
+        print(f'  CoinGecko fail: {e}')
 
-    # ── Binance 8h kline fallback ─────────────────────────────────
+    # ── 3. Kraken OHLC fallback ───────────────────────────────────
     try:
-        url = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=8h&limit=1'
-        req = Request(url, headers={'User-Agent':'Mozilla/5.0'})
-        with urlopen(req, timeout=8, context=_ssl_ctx) as r:
-            k = json.loads(r.read())[0]
-        price_8h  = float(k[1])   # candle open  = price 8h ago
-        price_now = float(k[4])   # candle close = current price
+        since = int(time.time()) - 9 * 3600
+        url = f'https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60&since={since}'
+        with urlopen(Request(url, headers=hdrs), timeout=10, context=_ssl_ctx) as r:
+            data = json.loads(r.read())
+        candles   = data['result']['XXBTZUSD']
+        price_8h  = float(candles[0][1])   # open of oldest candle
+        price_now = float(candles[-1][4])  # close of newest candle
         pct = (price_now - price_8h) / price_8h * 100
-        return pct, price_now, price_8h, 'Binance'
-    except Exception: pass
+        return pct, price_now, price_8h, 'Kraken'
+    except Exception as e:
+        print(f'  Kraken fail: {e}')
 
     return None, None, None, 'error'
 
@@ -434,8 +463,16 @@ def refresh_sentiment():
 def get_sentiment():
     with _sent_lock:
         now = time.time()
-        if now - _sent_cache['ts'] > PRICE_TTL:
-            threading.Thread(target=refresh_sentiment, daemon=True).start()
+        is_init = _sent_cache['source'] == 'init'
+        is_stale = now - _sent_cache['ts'] > PRICE_TTL
+
+    if is_init:
+        # Cold start — block until we have real data (max 15s)
+        refresh_sentiment()
+    elif is_stale:
+        threading.Thread(target=refresh_sentiment, daemon=True).start()
+
+    with _sent_lock:
         return dict(_sent_cache)
 
 # ══════════════════════════════════════════════════════════════════
