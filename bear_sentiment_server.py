@@ -2,7 +2,7 @@
 """
 Baby Bear NFT — BTC Sentiment Edition
 ──────────────────────────────────────────────────────────────────
-8-hour BTC price change → background colour for ALL 10,000 bears
+20-minute BTC price change → background colour for ALL 10,000 bears
 
   UP  < 1 %  →  💜 Purple
   UP  1–2 %  →  🟡 Yellow
@@ -393,70 +393,70 @@ def load_metadata():
     print(f" {len(BEARS):,} bears loaded ({time.time()-t0:.1f}s)")
 
 # ══════════════════════════════════════════════════════════════════
-#  BTC Sentiment (8-hour change via Binance kline)
+#  BTC Sentiment (20-minute change via Binance kline)
 # ══════════════════════════════════════════════════════════════════
-_sent_cache = {'pct': 0.0, 'price_now': 0, 'price_8h': 0, 'key': 'up_low',
+_sent_cache = {'pct': 0.0, 'price_now': 0, 'price_20m': 0, 'key': 'up_low',
                'bg_key': 'sent_purple', 'emoji': '💜', 'label': 'SLIGHT UP',
                'css': '#7b3db8', 'ts': 0, 'source': 'init'}
 _sent_lock  = threading.Lock()
 
 def fetch_sentiment():
-    """Fetch 8h BTC change. Tries 3 sources in order."""
+    """Fetch 20-minute BTC change. Tries 3 sources in order."""
     hdrs = {'User-Agent': 'Mozilla/5.0'}
 
-    # ── 1. CryptoCompare hourly OHLCV (no key, reliable) ─────────
+    # ── 1. CryptoCompare 1-min OHLCV (most accurate) ─────────────
     try:
-        url = 'https://min-api.cryptocompare.com/data/v2/histohour?fsym=BTC&tsym=USD&limit=9'
+        url = 'https://min-api.cryptocompare.com/data/v2/histominute?fsym=BTC&tsym=USD&limit=20'
         with urlopen(Request(url, headers=hdrs), timeout=10, context=_ssl_ctx) as r:
             data = json.loads(r.read())
         candles   = data['Data']['Data']
-        price_8h  = float(candles[0]['open'])
-        price_now = float(candles[-1]['close'])
-        pct = (price_now - price_8h) / price_8h * 100
-        return pct, price_now, price_8h, 'CryptoCompare'
+        price_20m = float(candles[0]['open'])   # price 20 min ago
+        price_now = float(candles[-1]['close'])  # current price
+        pct = (price_now - price_20m) / price_20m * 100
+        return pct, price_now, price_20m, 'CryptoCompare'
     except Exception as e:
         print(f'  CryptoCompare fail: {e}')
 
-    # ── 2. CoinGecko hourly chart ─────────────────────────────────
+    # ── 2. Kraken 1-min OHLC ─────────────────────────────────────
     try:
-        url = 'https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1'
-        with urlopen(Request(url, headers=hdrs), timeout=12, context=_ssl_ctx) as r:
-            data = json.loads(r.read())
-        prices    = data['prices']
-        now_ts    = time.time() * 1000
-        price_now = prices[-1][1]
-        price_8h  = min(prices, key=lambda p: abs(p[0] - (now_ts - 8*3600*1000)))[1]
-        pct = (price_now - price_8h) / price_8h * 100
-        return pct, price_now, price_8h, 'CoinGecko'
-    except Exception as e:
-        print(f'  CoinGecko fail: {e}')
-
-    # ── 3. Kraken OHLC fallback ───────────────────────────────────
-    try:
-        since = int(time.time()) - 9 * 3600
-        url = f'https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60&since={since}'
+        since = int(time.time()) - 22 * 60
+        url = f'https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1&since={since}'
         with urlopen(Request(url, headers=hdrs), timeout=10, context=_ssl_ctx) as r:
             data = json.loads(r.read())
         candles   = data['result']['XXBTZUSD']
-        price_8h  = float(candles[0][1])   # open of oldest candle
-        price_now = float(candles[-1][4])  # close of newest candle
-        pct = (price_now - price_8h) / price_8h * 100
-        return pct, price_now, price_8h, 'Kraken'
+        price_20m = float(candles[0][1])    # open of oldest 1-min candle ≈ 20m ago
+        price_now = float(candles[-1][4])   # close of newest candle
+        pct = (price_now - price_20m) / price_20m * 100
+        return pct, price_now, price_20m, 'Kraken'
     except Exception as e:
         print(f'  Kraken fail: {e}')
+
+    # ── 3. CoinGecko simple price (current only, fallback) ────────
+    try:
+        url = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true'
+        with urlopen(Request(url, headers=hdrs), timeout=12, context=_ssl_ctx) as r:
+            data = json.loads(r.read())
+        price_now = float(data['bitcoin']['usd'])
+        pct_24h   = float(data['bitcoin'].get('usd_24h_change', 0))
+        # estimate 20m from 24h rate (rough fallback)
+        pct = pct_24h / 72
+        price_20m = price_now / (1 + pct / 100)
+        return pct, price_now, price_20m, 'CoinGecko'
+    except Exception as e:
+        print(f'  CoinGecko fail: {e}')
 
     return None, None, None, 'error'
 
 def refresh_sentiment():
-    pct, price_now, price_8h, source = fetch_sentiment()
+    pct, price_now, price_20m, source = fetch_sentiment()
     if pct is None:
         return False
     key, bg_key, emoji, label, css = pct_to_sentiment(pct)
     with _sent_lock:
-        _sent_cache.update(dict(pct=pct, price_now=price_now, price_8h=price_8h,
+        _sent_cache.update(dict(pct=pct, price_now=price_now, price_20m=price_20m,
                                 key=key, bg_key=bg_key, emoji=emoji, label=label,
                                 css=css, ts=time.time(), source=source))
-    print(f"  💰  BTC: ${price_now:>10,.0f}  (8h ago ${price_8h:,.0f})  "
+    print(f"  💰  BTC: ${price_now:>10,.0f}  (20m ago ${price_20m:,.0f})  "
           f"Δ {pct:+.2f}%  → {emoji} {label}  [{source}]")
     return True
 
@@ -513,7 +513,7 @@ def get_bear_image(token_id):
 def build_html(sent, total):
     pct       = sent['pct']
     price_now = sent['price_now']
-    price_8h  = sent['price_8h']
+    price_20m  = sent['price_20m']
     emoji     = sent['emoji']
     label     = sent['label']
     css       = sent['css']
@@ -599,13 +599,13 @@ h1{{font-size:1.6rem;letter-spacing:3px;margin-bottom:4px}}
     <div class="sent-emoji">{emoji}</div>
     <div class="sent-label">{label}</div>
     <div class="sent-pct">{sign}{pct:.2f}%</div>
-    <div class="sent-sub">8-hour change · source: {sent['source']} · {age}s ago</div>
+    <div class="sent-sub">20-minute change · source: {sent['source']} · {age}s ago</div>
   </div>
   <div class="price-card">
     <div class="p-label">Bitcoin Price</div>
     <div class="price-now">${price_now:>,.0f}</div>
-    <div class="price-8h">8h ago: ${price_8h:>,.0f}</div>
-    <div class="price-chg">{sign}{pct:.2f}% in last 8 hours</div>
+    <div class="price-8h">20m ago: ${price_20m:>,.0f}</div>
+    <div class="price-chg">{sign}{pct:.2f}% in last 20 minutes</div>
   </div>
 </div>
 
@@ -723,12 +723,12 @@ class Handler(BaseHTTPRequestHandler):
             base = BASE_URL if BASE_URL else f'{scheme}://{host}'
             meta = {
                 "name":        traits['name'],
-                "description": "Baby Bear NFT — background changes live with 8h BTC sentiment.",
+                "description": "Baby Bear NFT — background changes live with 20-minute BTC sentiment.",
                 "image":       f"{base}/bears/{token_id}/image.png",
                 "external_url": base,
                 "attributes":  [
                     {"trait_type":"Sentiment Background","value": f"{sent['emoji']} {sent['label']}"},
-                    {"trait_type":"BTC 8h Change",       "value": f"{sent['pct']:+.2f}%"},
+                    {"trait_type":"BTC 20m Change",       "value": f"{sent['pct']:+.2f}%"},
                     {"trait_type":"Fur",        "value": traits['fur'].replace('_',' ').title()},
                     {"trait_type":"Eyes",       "value": traits['eye'].title()},
                     {"trait_type":"Hat",        "value": traits['hat'].replace('_',' ').title()},
@@ -745,7 +745,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200,'application/json',json.dumps({
                 "pct":       sent['pct'],
                 "price_now": sent['price_now'],
-                "price_8h":  sent['price_8h'],
+                "price_20m":  sent['price_20m'],
                 "sentiment": sent['label'],
                 "emoji":     sent['emoji'],
                 "bg_key":    sent['bg_key'],
@@ -774,7 +774,7 @@ class Handler(BaseHTTPRequestHandler):
             base = BASE_URL if BASE_URL else f'{scheme}://{host}'
             self._send(200,'application/json',json.dumps({
                 "name":            "Baby Bear",
-                "description":     "10,000 pixel baby bears whose background color changes live with Bitcoin 8h sentiment. UP>2% = Pink | UP 1-2% = Yellow | UP<1% = Purple | DOWN<1% = Blue | DOWN>1% = Black.",
+                "description":     "10,000 pixel baby bears whose background color changes live with Bitcoin 20m sentiment. UP>2% = Pink | UP 1-2% = Yellow | UP<1% = Purple | DOWN<1% = Blue | DOWN>1% = Black.",
                 "image":           f"{base}/bears/1/image.png",
                 "external_link":   base,
                 "seller_fee_basis_points": 500,
