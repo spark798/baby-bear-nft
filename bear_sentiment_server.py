@@ -508,6 +508,192 @@ def get_bear_image(token_id):
     return png, sent
 
 # ══════════════════════════════════════════════════════════════════
+#  Mint Page
+# ══════════════════════════════════════════════════════════════════
+CONTRACT_ADDRESS = "0xAF6a5e744Ff06d50c2F236b90344F84A640381A9"
+MINT_PRICE_MATIC = "0.003"
+
+def build_mint_html():
+    base = BASE_URL if BASE_URL else "http://localhost:8889"
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>🐻 Baby Bear NFT — Mint</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0a0a12;color:#e0e0e0;font-family:'Courier New',monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}}
+h1{{font-size:1.6rem;color:#fff;margin-bottom:4px;letter-spacing:2px}}
+.sub{{color:#666;font-size:.8rem;margin-bottom:32px}}
+.card{{background:#13131f;border:1px solid #2a2a3a;border-radius:12px;padding:32px;width:100%;max-width:440px;display:flex;flex-direction:column;gap:20px}}
+.bear-preview{{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:4px}}
+.bear-preview img{{width:100%;border-radius:4px;image-rendering:pixelated}}
+.info-row{{display:flex;justify-content:space-between;font-size:.85rem;color:#888;border-bottom:1px solid #1e1e2e;padding-bottom:12px}}
+.info-row span{{color:#ccc}}
+.price-box{{background:#0d0d1a;border:1px solid #2a2a3a;border-radius:8px;padding:14px;text-align:center}}
+.price-big{{font-size:1.5rem;color:#fff;font-weight:bold}}
+.price-usd{{font-size:.75rem;color:#555;margin-top:2px}}
+.qty-row{{display:flex;align-items:center;gap:12px;justify-content:center}}
+.qty-btn{{background:#1e1e2e;border:1px solid #333;color:#fff;width:36px;height:36px;border-radius:6px;font-size:1.2rem;cursor:pointer}}
+.qty-btn:hover{{background:#2a2a3a}}
+#qty{{background:#0d0d1a;border:1px solid #333;color:#fff;width:60px;height:36px;text-align:center;border-radius:6px;font-size:1rem}}
+.total-cost{{text-align:center;font-size:.85rem;color:#666}}
+.total-cost span{{color:#aaa}}
+button#mintBtn{{width:100%;padding:14px;border:none;border-radius:8px;font-size:1rem;font-family:'Courier New',monospace;font-weight:bold;cursor:pointer;letter-spacing:1px;transition:all .2s}}
+#mintBtn.connect{{background:linear-gradient(135deg,#7b3db8,#4a1d8a);color:#fff}}
+#mintBtn.connect:hover{{background:linear-gradient(135deg,#9b5dd8,#6a3daa)}}
+#mintBtn.mint{{background:linear-gradient(135deg,#d63087,#8b1a5a);color:#fff}}
+#mintBtn.mint:hover{{background:linear-gradient(135deg,#e650a7,#ab3a7a)}}
+#mintBtn:disabled{{background:#2a2a3a;color:#555;cursor:not-allowed}}
+.status{{text-align:center;font-size:.8rem;min-height:20px;padding:4px}}
+.status.ok{{color:#4caf50}}
+.status.err{{color:#f44336}}
+.status.pending{{color:#ff9800}}
+.progress{{background:#1e1e2e;border-radius:4px;height:6px;overflow:hidden}}
+.progress-bar{{height:100%;background:linear-gradient(90deg,#7b3db8,#d63087);transition:width .5s}}
+.supply-text{{display:flex;justify-content:space-between;font-size:.75rem;color:#555;margin-top:4px}}
+a.back{{color:#555;font-size:.75rem;text-decoration:none;margin-top:16px}}
+a.back:hover{{color:#888}}
+</style>
+</head>
+<body>
+<h1>🐻 Baby Bear NFT</h1>
+<p class="sub">Living NFT — background changes with BTC sentiment</p>
+
+<div class="card">
+  <div class="bear-preview">
+    <img src="{base}/bears/1/image.png">
+    <img src="{base}/bears/500/image.png">
+    <img src="{base}/bears/1000/image.png">
+    <img src="{base}/bears/2000/image.png">
+  </div>
+
+  <div class="info-row">
+    <div>Contract</div>
+    <span style="font-size:.7rem">{CONTRACT_ADDRESS[:10]}...{CONTRACT_ADDRESS[-6:]}</span>
+  </div>
+  <div class="info-row">
+    <div>Network</div><span>Polygon</span>
+  </div>
+  <div class="info-row">
+    <div>Supply</div><span>10,000</span>
+  </div>
+
+  <div class="price-box">
+    <div class="price-big">{MINT_PRICE_MATIC} POL</div>
+    <div class="price-usd">per bear · ~$0.001</div>
+  </div>
+
+  <div>
+    <div class="qty-row">
+      <button class="qty-btn" onclick="changeQty(-1)">−</button>
+      <input id="qty" type="number" value="1" min="1" max="20" oninput="updateCost()">
+      <button class="qty-btn" onclick="changeQty(1)">+</button>
+    </div>
+    <div class="total-cost" style="margin-top:8px">Total: <span id="totalCost">{MINT_PRICE_MATIC} POL</span></div>
+  </div>
+
+  <div>
+    <div class="progress"><div class="progress-bar" id="progBar" style="width:0%"></div></div>
+    <div class="supply-text"><span id="minted">— minted</span><span>10,000 total</span></div>
+  </div>
+
+  <button id="mintBtn" class="connect" onclick="handleClick()">Connect Wallet</button>
+  <div class="status" id="status"></div>
+</div>
+<a class="back" href="{base}">← Back to dashboard</a>
+
+<script>
+const CONTRACT = "{CONTRACT_ADDRESS}";
+const PRICE    = BigInt("{int(float(MINT_PRICE_MATIC)*1e18)}");
+const ABI = [
+  {{"inputs":[{{"name":"qty","type":"uint256"}}],"name":"mint","outputs":[],"stateMutability":"payable","type":"function"}},
+  {{"inputs":[],"name":"mintPrice","outputs":[{{"name":"","type":"uint256"}}],"stateMutability":"view","type":"function"}},
+  {{"inputs":[],"name":"totalMinted","outputs":[{{"name":"","type":"uint256"}}],"stateMutability":"view","type":"function"}},
+  {{"inputs":[],"name":"MAX_SUPPLY","outputs":[{{"name":"","type":"uint256"}}],"stateMutability":"view","type":"function"}},
+  {{"inputs":[],"name":"mintOpen","outputs":[{{"name":"","type":"bool"}}],"stateMutability":"view","type":"function"}}
+];
+
+let provider, signer, contract, connected = false;
+
+function changeQty(d) {{
+  const el = document.getElementById('qty');
+  el.value = Math.max(1, Math.min(20, parseInt(el.value||1) + d));
+  updateCost();
+}}
+function updateCost() {{
+  const q = parseInt(document.getElementById('qty').value)||1;
+  const total = (parseFloat("{MINT_PRICE_MATIC}") * q).toFixed(4);
+  document.getElementById('totalCost').textContent = total + ' POL';
+}}
+function setStatus(msg, cls='') {{
+  const s = document.getElementById('status');
+  s.textContent = msg; s.className = 'status ' + cls;
+}}
+
+async function loadSupply() {{
+  try {{
+    const p = new ethers.JsonRpcProvider('https://polygon-rpc.com');
+    const c = new ethers.Contract(CONTRACT, ABI, p);
+    const [minted, open] = await Promise.all([c.totalMinted(), c.mintOpen()]);
+    const m = Number(minted);
+    document.getElementById('minted').textContent = m.toLocaleString() + ' minted';
+    document.getElementById('progBar').style.width = (m/10000*100) + '%';
+    if (!open) setStatus('Mint not open yet', 'err');
+  }} catch(e) {{ console.log(e); }}
+}}
+
+async function handleClick() {{
+  if (!window.ethereum) {{ setStatus('MetaMask not detected. Install MetaMask first.', 'err'); return; }}
+  if (!connected) {{
+    try {{
+      provider = new ethers.BrowserProvider(window.ethereum);
+      await provider.send('eth_requestAccounts', []);
+      const net = await provider.getNetwork();
+      if (net.chainId !== 137n) {{
+        setStatus('Switch MetaMask to Polygon network', 'err');
+        try {{ await window.ethereum.request({{method:'wallet_switchEthereumChain',params:[{{chainId:'0x89'}}]}}); }} catch(e) {{}}
+        return;
+      }}
+      signer = await provider.getSigner();
+      contract = new ethers.Contract(CONTRACT, ABI, signer);
+      connected = true;
+      const btn = document.getElementById('mintBtn');
+      btn.textContent = 'Mint 🐻';
+      btn.className = 'mint';
+      setStatus('Wallet connected: ' + (await signer.getAddress()).slice(0,6) + '...', 'ok');
+    }} catch(e) {{ setStatus('Connection failed: ' + e.message, 'err'); }}
+    return;
+  }}
+  // Mint
+  const qty = parseInt(document.getElementById('qty').value)||1;
+  const btn = document.getElementById('mintBtn');
+  btn.disabled = true;
+  setStatus('Confirm in MetaMask...', 'pending');
+  try {{
+    const value = PRICE * BigInt(qty);
+    const tx = await contract.mint(qty, {{value}});
+    setStatus('Transaction sent, waiting...', 'pending');
+    await tx.wait();
+    setStatus('🎉 Minted ' + qty + ' bear(s)! Tx: ' + tx.hash.slice(0,10) + '...', 'ok');
+    loadSupply();
+  }} catch(e) {{
+    setStatus('Failed: ' + (e.reason || e.message || 'Unknown error'), 'err');
+  }}
+  btn.disabled = false;
+}}
+
+// Load ethers.js then supply
+const s = document.createElement('script');
+s.src = 'https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js';
+s.onload = loadSupply;
+document.head.appendChild(s);
+</script>
+</body>
+</html>"""
+
+# ══════════════════════════════════════════════════════════════════
 #  HTML Dashboard
 # ══════════════════════════════════════════════════════════════════
 def build_html(sent, total):
@@ -768,6 +954,9 @@ class Handler(BaseHTTPRequestHandler):
                 "css_color": css,
             }))
 
+        elif path == '/mint':
+            self._send(200, 'text/html; charset=utf-8', build_mint_html())
+
         elif path == '/collection.json':
             host = self.headers.get('Host', f'localhost:{PORT}')
             scheme = 'https' if BASE_URL else 'http'
@@ -778,7 +967,7 @@ class Handler(BaseHTTPRequestHandler):
                 "image":           f"{base}/bears/1/image.png",
                 "external_link":   base,
                 "seller_fee_basis_points": 500,
-                "fee_recipient":   "0x0000000000000000000000000000000000000000",
+                "fee_recipient":   "0xC4257c62627d8A9945838B7fa5507fda01c38694",
             }))
 
         else:
