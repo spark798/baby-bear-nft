@@ -775,10 +775,13 @@ h1{{font-size:1.6rem;letter-spacing:3px;margin-bottom:4px}}
 /* footer */
 .footer{{color:#222;font-size:.6rem;margin-top:10px;text-align:center}}
 .info-row{{display:flex;justify-content:space-between;font-size:.62rem;color:#2a2a4a;margin-top:8px}}
+.mint-link{{display:inline-block;margin-bottom:24px;padding:10px 28px;background:linear-gradient(135deg,#d63087,#7b3db8);color:#fff;text-decoration:none;border-radius:8px;font-size:.85rem;font-weight:bold;letter-spacing:1px}}
+.mint-link:hover{{opacity:.85}}
 </style>
 </head><body><div class="wrap">
 <h1>🐻 Baby Bear NFT</h1>
-<p class="sub">SENTIMENT EDITION — {total:,} BEARS · BACKGROUND DRIVEN BY 8H BTC CHANGE</p>
+<p class="sub">SENTIMENT EDITION — {total:,} BEARS · BACKGROUND DRIVEN BY 20M BTC CHANGE</p>
+<a class="mint-link" href="/mint">🐻 MINT NOW — 0.003 POL</a>
 
 <div class="row">
   <div class="sent-card">
