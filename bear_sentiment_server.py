@@ -100,6 +100,47 @@ def bear_to_png(cv):
                  + _chunk(b'IDAT', comp)
                  + _chunk(b'IEND', b''))
 
+def _png_wide(cv, cw, ch, scale):
+    nw, nh = cw * scale, ch * scale
+    raw = bytearray()
+    for y in range(ch):
+        row = bytearray()
+        for x in range(cw):
+            i = (y * cw + x) * 4
+            row += cv[i:i+4] * scale
+        line = b'\x00' + bytes(row)
+        for _ in range(scale): raw += line
+    comp = zlib.compress(bytes(raw), 6)
+    return bytes(b'\x89PNG\r\n\x1a\n'
+                 + _chunk(b'IHDR', struct.pack('>IIBBBBB', nw, nh, 8, 6, 0, 0, 0))
+                 + _chunk(b'IDAT', comp)
+                 + _chunk(b'IEND', b''))
+
+def build_banner_png():
+    """1400×350 banner: 5 bears (one per sentiment color) on dark background."""
+    BW, BH, BSCALE = 140, 35, 10
+    bcv = bytearray(bytes((10, 10, 18, 255)) * (BW * BH))
+    if not BEARS:
+        return _png_wide(bcv, BW, BH, BSCALE)
+    sent_keys = ['sent_black', 'sent_blue', 'sent_purple', 'sent_yellow', 'sent_pink']
+    candidates = [1, 500, 1000, 2000, 5000]
+    all_ids = list(BEARS.keys())
+    tids = [c for c in candidates if c in BEARS]
+    while len(tids) < 5:
+        tids.append(all_ids[len(tids) % len(all_ids)])
+    BY = (BH - H) // 2
+    for i, (bg_key, tid) in enumerate(zip(sent_keys, tids)):
+        bx = 5 + i * 27
+        t = BEARS[tid]
+        bear_cv = draw_bear(bg_key, t['fur'], t['eye'], t['mouth'],
+                            t['cheek'], t['hat'], t['eyegear'], t['neck'])
+        for y in range(H):
+            for x in range(W):
+                si = (y * W + x) * 4
+                di = ((BY + y) * BW + (bx + x)) * 4
+                bcv[di:di+4] = bear_cv[si:si+4]
+    return _png_wide(bcv, BW, BH, BSCALE)
+
 # ══════════════════════════════════════════════════════════════════
 #  Canvas primitives  (flat RGBA bytearray W×H×4)
 # ══════════════════════════════════════════════════════════════════
@@ -960,14 +1001,18 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/mint':
             self._send(200, 'text/html; charset=utf-8', build_mint_html())
 
+        elif path == '/banner.png':
+            self._send(200, 'image/png', build_banner_png())
+
         elif path == '/collection.json':
             host = self.headers.get('Host', f'localhost:{PORT}')
             scheme = 'https' if BASE_URL else 'http'
             base = BASE_URL if BASE_URL else f'{scheme}://{host}'
             self._send(200,'application/json',json.dumps({
                 "name":            "Baby Bear",
-                "description":     "10,000 pixel baby bears whose background color changes live with Bitcoin 20m sentiment. UP>2% = Pink | UP 1-2% = Yellow | UP<1% = Purple | DOWN<1% = Blue | DOWN>1% = Black.",
+                "description":     "10,000 pixel baby bears that breathe with Bitcoin. Each bear's background shifts in real time with the 20-minute BTC price change — 🖤 Black (bearish) · 💙 Blue (slight down) · 💜 Purple (slight up) · 🟡 Yellow (bullish) · 🌸 Pink (hot bull). Mint yours and watch it react to the market, 24/7.",
                 "image":           f"{base}/bears/1/image.png",
+                "banner_image_url": f"{base}/banner.png",
                 "external_link":   base,
                 "seller_fee_basis_points": 500,
                 "fee_recipient":   "0xC4257c62627d8A9945838B7fa5507fda01c38694",
