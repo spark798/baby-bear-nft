@@ -15,7 +15,7 @@ Open: http://localhost:8889
 """
 
 import struct, zlib, os, json, random, time, threading, math, ssl
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.request import urlopen, Request
 from urllib.error   import URLError
 
@@ -1050,7 +1050,10 @@ def main():
     if not refresh_sentiment():
         print(f"  ⚠️  Price fetch failed — using fallback (UP<1% / purple)")
 
-    server = HTTPServer(('0.0.0.0', PORT), Handler)
+    # ThreadingHTTPServer: handle requests concurrently (a dashboard load fires
+    # ~20 preview-image requests; a single-threaded server would serialize them).
+    # Shared state (_img_cache, _sent_cache) is already guarded by locks.
+    server = ThreadingHTTPServer(('0.0.0.0', PORT), Handler)
     print(f"\n🚀  Server ready")
     print(f"    Dashboard   →  http://localhost:{PORT}/")
     print(f"    Bear #1     →  http://localhost:{PORT}/bears/1/image.png")
