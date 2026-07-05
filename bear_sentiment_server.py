@@ -19,12 +19,12 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.request import urlopen, Request
 from urllib.error   import URLError
 
-# SSL — try system certs first (works on Render), fallback to certifi
+# SSL — try the system trust store first (works on Render), fall back to certifi.
+# Certificate verification is never disabled: these calls fetch prices that drive
+# the whole collection, so a MITM feeding fake candles would corrupt every bear.
 def _make_ssl_ctx():
     try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = True
-        return ctx
+        return ssl.create_default_context()
     except Exception:
         pass
     try:
@@ -32,10 +32,7 @@ def _make_ssl_ctx():
         return ssl.create_default_context(cafile=certifi.where())
     except Exception:
         pass
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return ctx
+    return ssl.create_default_context()
 
 _ssl_ctx = _make_ssl_ctx()
 
@@ -57,7 +54,7 @@ PREVIEW_IDS  = [1,500,1000,1500,2000,2500,3000,3500,4000,4500,
 SENTIMENTS = [
     # (min_pct, max_pct, key,         bg_key,              emoji, label,          css_color)
     ( 2.0,  999, 'up_high',   'sent_pink',    '🌸', 'HOT BULL',    '#d63087'),
-    ( 1.0,  2.0, 'up_mid',    'sent_yellow',  '🔥', 'BULLISH',     '#d4a800'),
+    ( 1.0,  2.0, 'up_mid',    'sent_yellow',  '🟡', 'BULLISH',     '#d4a800'),
     ( 0.0,  1.0, 'up_low',    'sent_purple',  '💜', 'SLIGHT UP',   '#7b3db8'),
     (-1.0,  0.0, 'down_low',  'sent_blue',    '💙', 'SLIGHT DOWN', '#1565c0'),
     (-999, -1.0, 'down_high', 'sent_black',   '🖤', 'BEARISH',     '#111118'),
@@ -544,7 +541,9 @@ def get_bear_image(token_id):
     png = bear_to_png(cv)
 
     with _cache_lock2:
-        if len(_img_cache) < 2000:   # keep up to 2k images in RAM (~10MB)
+        # Cache the whole collection per sentiment (~5KB/bear → ~50MB at 10k).
+        # Cleared automatically when the sentiment background changes.
+        if len(_img_cache) < 10000:
             _img_cache[token_id] = png
     return png, sent
 
@@ -786,11 +785,12 @@ h1{{font-size:1.6rem;letter-spacing:3px;margin-bottom:4px}}
 .bar-wrap{{background:#0e0e1e;border:1px solid #1e1e32;border-radius:14px;padding:20px;margin-bottom:20px}}
 .bar-title{{color:#333;font-size:.62rem;text-transform:uppercase;letter-spacing:2px;margin-bottom:12px}}
 .bar-track{{background:#111;border-radius:8px;height:24px;position:relative;overflow:hidden;border:1px solid #1e1e32}}
-.seg-black {{position:absolute;left:0;top:0;width:33.3%;height:100%;background:#111118}}
-.seg-blue  {{position:absolute;left:33.3%;top:0;width:33.4%;height:100%;background:#1565c0}}
-.seg-purple{{position:absolute;left:0%;top:0;width:20%;height:100%;background:#7b3db8;left:66.7%;width:8.3%}}
-.seg-yellow{{position:absolute;top:0;height:100%;background:#d4a800;left:75%;width:8.3%}}
-.seg-pink  {{position:absolute;top:0;height:100%;background:#d63087;left:83.3%;width:16.7%}}
+/* segments aligned to the -2%..+3% cursor scale: boundaries at -1/0/+1/+2 → 20% each */
+.seg-black {{position:absolute;left:0;top:0;width:20%;height:100%;background:#111118}}
+.seg-blue  {{position:absolute;left:20%;top:0;width:20%;height:100%;background:#1565c0}}
+.seg-purple{{position:absolute;left:40%;top:0;width:20%;height:100%;background:#7b3db8}}
+.seg-yellow{{position:absolute;left:60%;top:0;width:20%;height:100%;background:#d4a800}}
+.seg-pink  {{position:absolute;left:80%;top:0;width:20%;height:100%;background:#d63087}}
 .bar-cursor{{position:absolute;top:0;width:4px;height:100%;background:#fff;border-radius:2px;box-shadow:0 0 8px #fff;transition:left .6s ease}}
 .bar-ticks{{display:flex;justify-content:space-between;margin-top:6px;font-size:.58rem;color:#333}}
 
@@ -907,7 +907,7 @@ setInterval(()=>{{
   if(cd<=0) location.reload();
 }},1000);
 </script>
-</body></html>""".replace('{total:,}',f'{total:,}').replace('{PORT}',str(PORT)).replace('{PRICE_TTL}',str(PRICE_TTL))
+</body></html>"""
 
 # ══════════════════════════════════════════════════════════════════
 #  HTTP Server
@@ -924,6 +924,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(body)
+
+    def _base_url(self):
+        """Public base URL for absolute links in served metadata."""
+        if BASE_URL:
+            return BASE_URL
+        host = self.headers.get('Host', f'localhost:{PORT}')
+        return f'http://{host}'
 
     def do_GET(self):
         path = self.path.split('?')[0]
@@ -948,9 +955,7 @@ class Handler(BaseHTTPRequestHandler):
             traits = BEARS.get(token_id)
             sent   = get_sentiment()
             if not traits: self._send(404,'application/json','{"error":"not found"}'); return
-            host = self.headers.get('Host', f'localhost:{PORT}')
-            scheme = 'https' if BASE_URL else 'http'
-            base = BASE_URL if BASE_URL else f'{scheme}://{host}'
+            base = self._base_url()
             meta = {
                 "name":        traits['name'],
                 "description": "Baby Bear NFT — background changes live with 20-minute BTC sentiment.",
@@ -1005,9 +1010,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, 'image/png', build_banner_png())
 
         elif path == '/collection.json':
-            host = self.headers.get('Host', f'localhost:{PORT}')
-            scheme = 'https' if BASE_URL else 'http'
-            base = BASE_URL if BASE_URL else f'{scheme}://{host}'
+            base = self._base_url()
             self._send(200,'application/json',json.dumps({
                 "name":            "Baby Bear",
                 "description":     "10,000 pixel baby bears that breathe with Bitcoin. Each bear's background shifts in real time with the 20-minute BTC price change — 🖤 Black (bearish) · 💙 Blue (slight down) · 💜 Purple (slight up) · 🟡 Yellow (bullish) · 🌸 Pink (hot bull). Mint yours and watch it react to the market, 24/7.",
