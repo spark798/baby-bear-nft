@@ -673,15 +673,26 @@ function setStatus(msg, cls='') {{
 }}
 
 async function loadSupply() {{
-  try {{
-    const p = new ethers.JsonRpcProvider('https://polygon-rpc.com');
-    const c = new ethers.Contract(CONTRACT, ABI, p);
-    const [minted, open] = await Promise.all([c.totalMinted(), c.mintOpen()]);
-    const m = Number(minted);
-    document.getElementById('minted').textContent = m.toLocaleString() + ' minted';
-    document.getElementById('progBar').style.width = (m/10000*100) + '%';
-    if (!open) setStatus('Mint not open yet', 'err');
-  }} catch(e) {{ console.log(e); }}
+  // Try several keyless public RPCs — polygon-rpc.com now 401s (tenant disabled).
+  const RPCS = [
+    'https://polygon-bor-rpc.publicnode.com',
+    'https://polygon.llamarpc.com',
+    'https://rpc.ankr.com/polygon',
+    'https://1rpc.io/matic'
+  ];
+  for (const url of RPCS) {{
+    try {{
+      const p = new ethers.JsonRpcProvider(url);
+      const c = new ethers.Contract(CONTRACT, ABI, p);
+      const [minted, open] = await Promise.all([c.totalMinted(), c.mintOpen()]);
+      const m = Number(minted);
+      document.getElementById('minted').textContent = m.toLocaleString() + ' minted';
+      document.getElementById('progBar').style.width = (m/10000*100) + '%';
+      if (!open) setStatus('Mint not open yet', 'err');
+      return;
+    }} catch(e) {{ console.log('RPC failed:', url, e); }}
+  }}
+  document.getElementById('minted').textContent = 'supply unavailable';
 }}
 
 async function handleClick() {{
